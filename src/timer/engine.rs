@@ -51,7 +51,7 @@ impl PomodoroTimer {
 
                 // Check if we should take a long break (every N-th work
                 // session)
-                if self.cycles_completed % self.pomodoro.cycles == 0 {
+                if self.cycles_completed.is_multiple_of(self.pomodoro.cycles) {
                     // Every N-th work session is followed by a long break
                     self.state = TimerState::LongBreak;
                     self.remaining_time = self.pomodoro.long_break_duration;
@@ -111,11 +111,11 @@ impl PomodoroTimer {
                 }
 
                 // Poll input with a short timeout so it doesn't block the timer
-                if let Ok(cmd) = InputHandler::poll_input(Duration::from_millis(50)) {
-                    if cmd != UserCommand::None {
-                        // Only send non-None commands
-                        let _ = tx.send(cmd).await;
-                    }
+                if let Ok(cmd) = InputHandler::poll_input(Duration::from_millis(50))
+                    && cmd != UserCommand::None
+                {
+                    // Only send non-None commands
+                    let _ = tx.send(cmd).await;
                 }
             }
         });
