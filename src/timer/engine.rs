@@ -2,6 +2,7 @@ use crate::timer::pomodoro::{Pomodoro, TimerState};
 use crate::timer::input::{InputHandler, UserCommand};
 use std::time::Duration;
 use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
 use tokio::time::interval;
 use tokio::sync::mpsc;
 use crossterm::{terminal, cursor, ExecutableCommand};
@@ -97,9 +98,18 @@ impl PomodoroTimer {
         // Create a channel for input commands
         let (tx, mut rx) = mpsc::channel(1);
 
+        // Create a flag to signal the input task to stop
+        let should_stop = Arc::new(Mutex::new(false));
+        let should_stop_clone = Arc::clone(&should_stop);
+
         // Spawn a separate task to poll input continuously
-        tokio::spawn(async move {
+        let input_task = tokio::spawn(async move {
             loop {
+                // Check if we should stop
+                if *should_stop_clone.lock().unwrap() {
+                    break;
+                }
+
                 // Poll input with a short timeout so it doesn't block the timer
                 if let Ok(cmd) = InputHandler::poll_input(Duration::from_millis(50)) {
                     if cmd != UserCommand::None {
@@ -136,6 +146,10 @@ impl PomodoroTimer {
                             self.display(&mut stdout)?;
                         }
                         UserCommand::Quit => {
+                            // Signal the input task to stop
+                            *should_stop.lock().unwrap() = true;
+                            // Wait for the task to finish
+                            let _ = input_task.await;
                             stdout.execute(cursor::MoveToColumn(0))?;
                             writeln!(stdout)?;
                             stdout.execute(cursor::MoveToColumn(0))?;
