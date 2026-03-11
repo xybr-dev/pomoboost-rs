@@ -46,11 +46,15 @@ impl Pomodoro {
     }
 
     /// Get the total number of pomodoros (work + break cycles)
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn total_pomodoros(&self) -> u8 {
         self.cycles
     }
 
     /// Get duration for a given timer state
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn duration_for_state(&self, state: TimerState) -> u16 {
         match state {
             TimerState::Work => self.work_duration,

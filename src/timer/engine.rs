@@ -207,31 +207,44 @@ impl PomodoroTimer {
         }
     }
 
-    pub fn pause(&mut self) {
-        self.on_pause = true;
-    }
-
-    pub fn resume(&mut self) {
-        self.on_pause = false;
-    }
-
     pub fn toggle_pause(&mut self) {
         self.on_pause = !self.on_pause;
     }
 
-    // Getters
+    // Test-only getters - excluded from production compilation
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn pause(&mut self) {
+        self.on_pause = true;
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn resume(&mut self) {
+        self.on_pause = false;
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn remaining(&self) -> u16 {
         self.remaining_time
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn state(&self) -> TimerState {
         self.state
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn cycles_completed(&self) -> u8 {
         self.cycles_completed
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn is_paused(&self) -> bool {
         self.on_pause
     }
