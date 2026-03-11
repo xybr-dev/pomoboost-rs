@@ -2,7 +2,8 @@ use crate::timer::pomodoro::{Pomodoro, TimerState};
 use crate::timer::input::{InputHandler, UserCommand};
 use std::time::Duration;
 use std::io::{self, Write};
-use tokio::time::sleep;
+use tokio::time::interval;
+use tokio::sync::mpsc;
 use crossterm::{terminal, cursor, ExecutableCommand};
 
 pub struct PomodoroTimer {
@@ -93,60 +94,87 @@ impl PomodoroTimer {
     async fn run_loop(&mut self) -> std::io::Result<()> {
         let mut stdout = io::stdout();
 
-        loop {
-            self.tick();
+        // Create a channel for input commands
+        let (tx, mut rx) = mpsc::channel(1);
 
-            // Display current state with formatted time
-            let formatted_time = self.format_time(self.remaining_time);
-            let state_name = self.state_display();
-            let current_cycle = if self.state == TimerState::Work {
-                self.cycles_completed + 1
-            } else {
-                self.cycles_completed
-            };
-
-            let status = if self.on_pause { "PAUSED" } else { "RUNNING" };
-
-            // Use carriage return to overwrite the current line
-            write!(
-                stdout,
-                "\r[{}] {} | Cycle {}/{} | {} | (p)ause (s)kip (q)uit   ",
-                state_name, formatted_time, current_cycle, self.pomodoro.cycles, status
-            )?;
-
-            stdout.flush()?;
-
-            // Poll for user input with a 500ms timeout
-            if let Ok(command) = InputHandler::poll_input(Duration::from_millis(500)) {
-                match command {
-                    UserCommand::TogglePause => {
-                        self.toggle_pause();
-                    }
-                    UserCommand::Skip => {
-                        self.skip_phase();
-                    }
-                    UserCommand::Quit => {
-                        // Move cursor to column 0, then print goodbye message on new line
-                        stdout
-                            .execute(cursor::MoveToColumn(0))?;
-                        writeln!(stdout)?;
-                        stdout
-                            .execute(cursor::MoveToColumn(0))?;
-                        writeln!(stdout, "Timer stopped. Goodbye!")?;
-                        stdout
-                            .execute(cursor::MoveToColumn(0))?;
-                        writeln!(stdout)?;
-                        stdout.flush()?;
-                        return Ok(());
-                    }
-                    UserCommand::None => {
-                        // No input, continue
+        // Spawn a separate task to poll input continuously
+        tokio::spawn(async move {
+            loop {
+                // Poll input with a short timeout so it doesn't block the timer
+                if let Ok(cmd) = InputHandler::poll_input(Duration::from_millis(50)) {
+                    if cmd != UserCommand::None {
+                        // Only send non-None commands
+                        let _ = tx.send(cmd).await;
                     }
                 }
             }
+        });
 
-            sleep(Duration::from_millis(500)).await;
+        // Display initial state immediately on startup
+        self.display(&mut stdout)?;
+
+        // Create a 1-second interval timer
+        let mut ticker = interval(Duration::from_secs(1));
+
+        loop {
+            tokio::select! {
+                // Timer tick: fires every 1000ms
+                _ = ticker.tick() => {
+                    self.tick();
+                    self.display(&mut stdout)?;
+                }
+
+                // Input command arrives from the polling task
+                Some(cmd) = rx.recv() => {
+                    match cmd {
+                        UserCommand::TogglePause => {
+                            self.toggle_pause();
+                            self.display(&mut stdout)?;
+                        }
+                        UserCommand::Skip => {
+                            self.skip_phase();
+                            self.display(&mut stdout)?;
+                        }
+                        UserCommand::Quit => {
+                            stdout.execute(cursor::MoveToColumn(0))?;
+                            writeln!(stdout)?;
+                            stdout.execute(cursor::MoveToColumn(0))?;
+                            writeln!(stdout, "Timer stopped. Goodbye!")?;
+                            stdout.execute(cursor::MoveToColumn(0))?;
+                            writeln!(stdout)?;
+                            stdout.flush()?;
+                            return Ok(());
+                        }
+                        UserCommand::None => {
+                            // Should never happen since we filter these out
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    /// Display the current timer state
+    fn display(&self, stdout: &mut io::Stdout) -> std::io::Result<()> {
+        let formatted_time = self.format_time(self.remaining_time);
+        let state_name = self.state_display();
+        let current_cycle = if self.state == TimerState::Work {
+            self.cycles_completed + 1
+        } else {
+            self.cycles_completed
+        };
+
+        let status = if self.on_pause { "PAUSED" } else { "RUNNING" };
+
+        // Use carriage return to overwrite the current line
+        write!(
+            stdout,
+            "\r[{}] {} | Cycle {}/{} | {} | (p)ause (s)kip (q)uit   ",
+            state_name, formatted_time, current_cycle, self.pomodoro.cycles, status
+        )?;
+
+        stdout.flush()?;
+        Ok(())
     }
 
     /// Formats seconds as MM:SS
