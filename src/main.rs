@@ -1,16 +1,11 @@
-use tokio::time::sleep;
-use std::time::Duration;
-use crate::timer::pomodoro::{Pomodoro, TimerState};
+use crate::timer::pomodoro::Pomodoro;
 use crate::timer::engine::PomodoroTimer;
 
 #[tokio::main]
 async fn main() {
-    let pomodoro = Pomodoro {
-        work_duration: 5,
-        short_break_duration: 5,
-        long_break_duration: 5,
-        cycles: 4,
-    };
+    // Create Pomodoro config with validation
+    // Using short durations for testing (normally 25*60, 5*60, 15*60)
+    let pomodoro = Pomodoro::new(5, 3, 7, 4).expect("Failed to create Pomodoro timer");
 
     let mut timer = PomodoroTimer::new(pomodoro);
     timer.run().await;
