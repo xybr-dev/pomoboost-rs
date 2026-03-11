@@ -1,6 +1,9 @@
 use crate::timer::pomodoro::{Pomodoro, TimerState};
+use crate::timer::input::{InputHandler, UserCommand};
 use std::time::Duration;
+use std::io::{self, Write};
 use tokio::time::sleep;
+use crossterm::{terminal, cursor, ExecutableCommand};
 
 pub struct PomodoroTimer {
     pomodoro: Pomodoro,
@@ -35,17 +38,18 @@ impl PomodoroTimer {
         }
 
         // Time has reached 0, transition to next state
+        self.transition_to_next_state();
+    }
+
+    /// Transition to the next state when current phase completes
+    fn transition_to_next_state(&mut self) {
         match self.state {
             TimerState::Work => {
                 self.cycles_completed += 1;
 
-                // After N work sessions, take a long break; otherwise short break
-                if self.cycles_completed >= self.pomodoro.cycles {
-                    // Completed all cycles, restart
-                    self.cycles_completed = 0;
-                    self.state = TimerState::Work;
-                    self.remaining_time = self.pomodoro.work_duration;
-                } else if self.cycles_completed % self.pomodoro.cycles == 0 {
+                // Check if we should take a long break (every N-th work
+                // session)
+                if self.cycles_completed % self.pomodoro.cycles == 0 {
                     // Every N-th work session is followed by a long break
                     self.state = TimerState::LongBreak;
                     self.remaining_time = self.pomodoro.long_break_duration;
@@ -68,7 +72,27 @@ impl PomodoroTimer {
         }
     }
 
-    pub async fn run(&mut self) {
+    /// Skip the current phase and move to the next one
+    pub fn skip_phase(&mut self) {
+        self.remaining_time = 0;
+        self.transition_to_next_state();
+    }
+
+    pub async fn run(&mut self) -> std::io::Result<()> {
+        // Enable raw mode for keyboard input
+        terminal::enable_raw_mode()?;
+
+        let result = self.run_loop().await;
+
+        // Disable raw mode and cleanup
+        let _ = terminal::disable_raw_mode();
+
+        result
+    }
+
+    async fn run_loop(&mut self) -> std::io::Result<()> {
+        let mut stdout = io::stdout();
+
         loop {
             self.tick();
 
@@ -81,16 +105,47 @@ impl PomodoroTimer {
                 self.cycles_completed
             };
 
-            println!(
-                "[{}] {} | Cycle {}/{} | Pause: {}",
-                state_name,
-                formatted_time,
-                current_cycle,
-                self.pomodoro.cycles,
-                if self.on_pause { "YES" } else { "NO" }
-            );
+            let status = if self.on_pause { "PAUSED" } else { "RUNNING" };
 
-            sleep(Duration::from_secs(1)).await;
+            // Use carriage return to overwrite the current line
+            write!(
+                stdout,
+                "\r[{}] {} | Cycle {}/{} | {} | (p)ause (s)kip (q)uit   ",
+                state_name, formatted_time, current_cycle, self.pomodoro.cycles, status
+            )?;
+
+            stdout.flush()?;
+
+            // Poll for user input with a 500ms timeout
+            if let Ok(command) = InputHandler::poll_input(Duration::from_millis(500)) {
+                match command {
+                    UserCommand::TogglePause => {
+                        self.toggle_pause();
+                    }
+                    UserCommand::Skip => {
+                        self.skip_phase();
+                    }
+                    UserCommand::Quit => {
+                        // Move cursor to column 0, then print goodbye message on new line
+                        stdout
+                            .execute(cursor::MoveToColumn(0))?;
+                        writeln!(stdout)?;
+                        stdout
+                            .execute(cursor::MoveToColumn(0))?;
+                        writeln!(stdout, "Timer stopped. Goodbye!")?;
+                        stdout
+                            .execute(cursor::MoveToColumn(0))?;
+                        writeln!(stdout)?;
+                        stdout.flush()?;
+                        return Ok(());
+                    }
+                    UserCommand::None => {
+                        // No input, continue
+                    }
+                }
+            }
+
+            sleep(Duration::from_millis(500)).await;
         }
     }
 
@@ -102,7 +157,7 @@ impl PomodoroTimer {
     }
 
     /// Get human-readable state name
-    fn state_display(&self) -> &'static str {
+    fn state_display(&self) -> &str {
         match self.state {
             TimerState::Work => "WORK",
             TimerState::ShortBreak => "SHORT BREAK",
@@ -116,6 +171,10 @@ impl PomodoroTimer {
 
     pub fn resume(&mut self) {
         self.on_pause = false;
+    }
+
+    pub fn toggle_pause(&mut self) {
+        self.on_pause = !self.on_pause;
     }
 
     // Getters
